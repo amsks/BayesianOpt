@@ -14,7 +14,6 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 
 from typing import List
-import logging
 from typing import Optional
 from functools import partial
 from typing import Tuple
@@ -25,14 +24,12 @@ from tqdm.autonotebook import tqdm
 import numpy as np
 import pickle 
 
+import sys
 import os
 import gin
 
 from BayesianOpt import BayesianOpt
 
-
-
-# Create the RESNET-9 Model 
 # Customize the RESNET to 9 layers and 10 classes
 def create_resnet9_model() -> nn.Module:
     model = ResNet(BasicBlock, [1, 1, 1, 1], num_classes=10)
@@ -92,7 +89,7 @@ def objective(  lr=0.1,
 
     if iteration is not None:
         save = True 
-        checkpoint = model_dir + "model_iter_" + iteration + ".pt"
+        checkpoint = model_dir + f"model_iter_{iteration}.pt"
 
 
     model = ResNet9(learning_rate=lr)
@@ -123,14 +120,21 @@ def objective(  lr=0.1,
     return np.mean(balanced_accuracy_score(true_y, pred_y))
 
 
-@gin.configurable
+@gin.configurable(blacklist=['output_dir'])
 def session(
     budget=10,
     init_samples=2,
     epochs=1,
     init_epochs=1,
     gpu_count=1,
-    output_dir="./output"
+    batch_size=128,
+    output_dir="./output",
+    length_scale = 1.0,
+    nu=2.5,
+    alpha=1e-10,
+    n_restarts_optimizer=25,
+    epsilon=0.01, 
+    eps_decay=False
 ):
 
     os.makedirs(os.path.join(output_dir, "plots"))
@@ -139,8 +143,8 @@ def session(
     train_data = KMNIST("kmnist", train=True, download=True, transform=ToTensor())
     test_data = KMNIST("kmnist", train=False, download=True, transform=ToTensor())
 
-    train_dl = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=8 )
-    test_dl = DataLoader(test_data, batch_size=64, num_workers=8)
+    train_dl = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=8 )
+    test_dl = DataLoader(test_data, batch_size=batch_size, num_workers=8)
     
 
     # sample the domain
@@ -157,11 +161,11 @@ def session(
     y = y.reshape(len(y), 1)
 
     # Create the Model
-    m52 = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5)
-    model = GaussianProcessRegressor(kernel=m52, alpha=1e-10, n_restarts_optimizer=25)
+    m52 = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=nu)
+    model = GaussianProcessRegressor(kernel=m52, alpha=alpha, n_restarts_optimizer=n_restarts_optimizer)
 
 
-    B = BayesianOpt(GP=model, eps=0.01, plot_dir=output_dir+"/plots/")
+    B = BayesianOpt(GP=model, eps=epsilon, plot_dir=output_dir+"/plots/")
 
     # perform the optimization process
     for i in range(budget):
@@ -191,9 +195,13 @@ def session(
         X = np.vstack((X, [[X_next]]))
         y = np.vstack((y, [[Y_next]]))
 
+    for_save = {
+        'Learning Rates' : X,
+        'Balanced Accuracy' : y
+    }
 
-    with open(output_dir + "/rates.pkl", "wb") as f:
-        pickle.dump(y, f)
+    with open(output_dir + "/history.pkl", "wb") as f:
+        pickle.dump(for_save, f)
 
 def main (args):
 
@@ -213,6 +221,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--budget", type=int, default=10,
         help="Number of iterations for optimization."
+    )
+
+    parser.add_argument(
+        "--batch_size", type=int, default=128,
+        help="Batch size for ResNet-9 Model"
     )
     
     parser.add_argument(
@@ -245,5 +258,15 @@ if __name__ == "__main__":
         help="Path to gin config file to load some or all parameters"
     )
 
+    parser.add_argument(
+        "--epsilon", type=float, default=0.01,
+        help="Exploration Hyperparameter"
+    )
+    
+    parser.add_argument(
+        "--eps_decay", type=bool, default=False,
+        help="Set true to decay the epsilon parameter"
+    )
+    
     args = parser.parse_args()
     main(args)
