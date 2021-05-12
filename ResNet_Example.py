@@ -1,3 +1,10 @@
+import sys
+import os
+import gin
+
+import numpy as np
+import pickle
+
 import torch
 from torchvision.models import resnet18
 from torchvision.models.resnet import ResNet, BasicBlock
@@ -5,11 +12,11 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torchvision.datasets import KMNIST
 from torchvision.transforms import ToTensor
+
 import pytorch_lightning as pl
 from pytorch_lightning.core.decorators import auto_move_data
-from torchvision.models.resnet import ResNet, BasicBlock
-from sklearn.metrics import balanced_accuracy_score
 
+from sklearn.metrics import balanced_accuracy_score
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 
@@ -21,16 +28,9 @@ from typing import Union
 
 from tqdm.autonotebook import tqdm
 
-import numpy as np
-import pickle 
-
-import sys
-import os
-import gin
-
 from BayesianOpt import BayesianOpt
 
- 
+
 def create_resnet9_model() -> nn.Module:
     '''
         Function to customize the RESNET to 9 layers and 10 classes
@@ -248,39 +248,46 @@ def session(
     
 
     # sample the domain
-    # X = np.array([np.random.uniform(0, 1) for _ in range(init_samples)])
-    X = np.array([0.0, 0.99])
-    # y = np.array([objective(lr =x, 
-    #                         epochs=init_epochs, 
-    #                         gpu_count=gpu_count,
-    #                         train_dl=train_dl,
-    #                         test_dl=test_dl
-    #                         ) for x in X])
+    X = np.array([np.random.uniform(0, 1) for _ in range(init_samples)])
+    y = np.array([objective(lr =x, 
+                            epochs=init_epochs, 
+                            gpu_count=gpu_count,
+                            train_dl=train_dl,
+                            test_dl=test_dl
+                            ) for x in X])
 
-    y = np.array([0.0894, 0.9707])
+    # X = np.array([0.0, 0.99])
+    # y = np.array([0.0894, 0.9707])
 
     # reshape into rows and cols
     X = X.reshape(len(X), 1)
     y = y.reshape(len(y), 1)
 
     # Create the Model
-    m52 = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=nu)
-    model = GaussianProcessRegressor(kernel=m52, alpha=alpha, n_restarts_optimizer=n_restarts_optimizer)
+    m52 = ConstantKernel(1.0) * Matern( length_scale=length_scale, 
+                                        nu=nu
+                                    )
+    model = GaussianProcessRegressor(
+                                        kernel=m52, 
+                                        alpha=alpha, 
+                                        n_restarts_optimizer=n_restarts_optimizer
+                                    )
 
 
-    B = BayesianOpt(GP=model, eps=epsilon, plot_dir=output_dir+"/plots/")
+    B = BayesianOpt(    model=model, 
+                        eps=epsilon, 
+                        plot_dir=output_dir+"/plots/"
+                    )
 
-    # perform the optimization process
+    
     for i in range(budget):
         # fit the model
         B.model.fit(X, y)
 
-        # select the next point to sample
-        # X_next = B.optimize_acq(X, y)
+        # Select the next point to sample
+        X_next = B.optimize_acq(X, y)
 
-        X_next = B.suggest_next(X,y)
-
-        # sample the point
+        # Sample the point from Objective
         Y_next = objective( lr=X_next, 
                             epochs=epochs, 
                             gpu_count=gpu_count,
@@ -292,14 +299,15 @@ def session(
 
         print(f"LR = {X_next} \t Balanced Accuracy = {Y_next*100} %")
 
-
+        # Plots for second iteration onwards 
         if i > 0:
             B.plot(X, y, X_next, i+1)
 
-        # add the data to the dataset
+        # add the data to History
         X = np.vstack((X, [[X_next]]))
         y = np.vstack((y, [[Y_next]]))
 
+    # Save the History
     for_save = {
         'Learning Rates' : X,
         'Balanced Accuracy' : y
@@ -314,6 +322,7 @@ def main (args):
     if args.opt_config_path is not None:
         gin.parse_config_file(args.opt_config_path)
 
+    # Remove the config path rmo arguments afterparsing
     del args.opt_config_path
     session(**vars(args))
 
@@ -335,7 +344,7 @@ if __name__ == "__main__":
     
     parser.add_argument(
         "--init_samples", type=int, default=2,
-        help="Number of Initial samples before fitting the Gaussian Process"
+        help="Number of Initial samples to fit the Model"
     )
 
     parser.add_argument(

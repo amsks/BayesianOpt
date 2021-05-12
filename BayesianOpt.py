@@ -1,26 +1,24 @@
-from math import sin
-from math import pi
-from numpy import arange, vstack, argmax, asarray
-from numpy.random import normal, random
-from scipy.stats import norm
 import scipy
+import numpy as np
+from matplotlib import pyplot as plt
+from sklearn.gaussian_process import GaussianProcessRegressor
+import seaborn as sns
+
+
 from warnings import catch_warnings
 from warnings import simplefilter
-from matplotlib import pyplot as plt
-import seaborn as sns
-from sklearn.gaussian_process import GaussianProcessRegressor
-import numpy as np
 from pathlib import Path
+import pdb
 
 class BayesianOpt:
     def __init__(self,
                     eps=1,
-                    GP=GaussianProcessRegressor(),
                     plot_dir="./output/plots/",
-                    bounds = [0,1]
+                    bounds = (0,1),
+                    model=GaussianProcessRegressor(),
                 ):
         '''
-            Class to implement bayesian Optimization
+            Class to implement Bayesian Optimization
 
             Parameters
             -----------
@@ -33,17 +31,19 @@ class BayesianOpt:
             plot_dir: str
                 Directory to store the outputs
 
-            bounds: list
+            bounds: Tuple
                 Bounds for optimization
 
         '''
 
         self.eps = eps
-        self.div = 2
-        self.eps_min = 1e-3
-        self.model = GP
+        self.model = model
         self.plot_dir = plot_dir
         self.bounds = bounds
+
+        self.X_samples_ = np.asarray(np.arange(self.bounds[0], self.bounds[1], 0.001))
+        self.X_samples_ = self.X_samples_.reshape(len(self.X_samples_), 1)
+
 
     def decay_eps(self):
         '''
@@ -51,11 +51,14 @@ class BayesianOpt:
             factor in the class definition
         '''
 
-        if self.eps >= self.eps_min:
-            self.eps = self.eps / self.div
+        div_ = 2 
+        eps_min_ = 1e-3 
+
+        if self.eps >= eps_min_:
+            self.eps = self.eps / div_
 
         else:
-            self.eps = self.eps_min
+            self.eps = eps_min_
 
         print(f"Epsilon ---> {self.eps}")
 
@@ -83,7 +86,7 @@ class BayesianOpt:
 
     # Expected Improvement acquisition function
 
-    def _acquisition(self, X, X_samples):
+    def _acquisition(self, X, samples):
         '''
             Acquisition function using hte Expected Improvement method
 
@@ -102,22 +105,24 @@ class BayesianOpt:
 
         '''
 
-        # calculate the best surrogate score found so far
-        y_hat, y_std = self.surrogate(X)
-        y_max = max(y_hat)
+        # calculate the max of surrogate values from history
+        mu_x_, _ = self.surrogate(X)
+        max_x_ = max(mu_x_)
 
-        # calculate mean and sigma via surrogate function
-        mu, std = self.surrogate(X_samples)
-        mu = mu[:, 0]
+        # Get the mean and deviation of the samples 
+        mu_sample_, std_sample_ = self.surrogate(samples)
+        mu_sample_ = mu_sample_[:, 0]
 
-        # calculate the improvement
+        # Get the improvement
         with np.errstate(divide='warn'):
-            z = (mu - y_max - self.eps) / std
-            EI = (mu - y_max - self.eps) * norm.cdf(z) + std * norm.pdf(z)
-            EI[std == 0.0] = 0
+            z = (mu_sample_ - max_x_ - self.eps) / std_sample_
+            EI_ = (mu_sample_ - max_x_ - self.eps) * \
+                scipy.stats.norm.cdf(z) + std_sample_ * scipy.stats.norm.pdf(z)
+            EI_[std_sample_ == 0.0] = 0
 
-        return EI
+        return EI_
 
+    # TODO: Add n_starts optimization
     def optimize_acq(self, X, y):
         '''
             Optimization of the Acquisition function using a maximization check of the outputs
@@ -139,47 +144,17 @@ class BayesianOpt:
 
 
         # Get random samples
-        X_samples = asarray(arange(self.bounds[0], self.bounds[1], 0.001))
-        X_samples = X_samples.reshape(len(X_samples), 1)
+        
 
         # Calculate Acquisition value for each sample
-        scores = self._acquisition(X, X_samples)
+        scores_ = self._acquisition(X, self.X_samples_)
 
         # Get the index of the largest Score
-        max_index = argmax(scores)
+        max_index_ = np.argmax(scores_)
 
-        return X_samples[max_index, 0]
-
-    def _min_obj(self, X, X_samples):
-        
-        return -self._acquisition(X, X_samples)
+        return self.X_samples_[max_index_, 0]
     
-    
-    def suggest_next(self, X, y, n_starts=25):
-        
-        start_points_dict = [self.surrogate(X) for i in range(n_restarts)]
-        start_points_arr = np.random.uniform(self.bounds[0], self.bounds[1], size=(n_starts,1))
-        
-        x_best = np.empty((n_starts,))
-        f_best = np.empty((n_starts,))
-
-        for index, start_point in enumerate(start_points_arr):
-
-            print(start_point)
-            
-            res = scipy.optimize.minimize(
-                min_obj, 
-                # x0=np.array([start_point]), 
-                # method='L-BFGS-B',
-                bounds=self.bounds
-                )
-            x_best[index], f_best[index] = res.x, np.atleast_1d(res.fun)[0]
-        
-        print(x_best[np.argmin(f_best)])
-        return x_best[np.argmin(f_best)]
-
-    
-    def plot(self, X, y, X_next, iteration):
+    def plot(self, X, y, X_next, iteration, show=False):
         '''
             Function to plot observations, posterior mean, uncertainty, surrogate 
             and next sampling point
@@ -202,27 +177,27 @@ class BayesianOpt:
         '''
 
         plt.figure(figsize=(10, 5))
-        clrs = sns.color_palette("husl", 5)
+        colors_ = sns.color_palette("husl", 5)
 
         # Plot the observation
         plt.scatter(X, y)
 
         # line plot of surrogate function across domain
-        X_samples = asarray(arange(self.bounds[0], self.bounds[1], 0.001))
-        X_samples = X_samples.reshape(len(X_samples), 1)
-        y_samples, std = self.surrogate(X_samples)
-        plt.plot(X_samples, y_samples, label='Surrogate Posterior')
+        # X_samples_ = np.asarray(np.arange(self.bounds[0], self.bounds[1], 0.001))
+        # X_samples_ = X_samples_.reshape(len(X_samples_), 1)
+        y_samples_, std_samples_ = self.surrogate(self.X_samples_)
+        plt.plot(self.X_samples_, y_samples_, label='Surrogate Posterior')
         plt.axvline(x=X_next, ls='--', c='k', lw=1,
                     label='Next sampling location')
-        plt.fill_between(   X_samples.ravel(),
-                            y_samples.ravel() + 1.96 * std,
-                            y_samples.ravel() - 1.96 * std,
+        plt.fill_between(   self.X_samples_.ravel(),
+                            y_samples_.ravel() + 1.96 * std_samples_,
+                            y_samples_.ravel() - 1.96 * std_samples_,
                             alpha=0.1,
-                            facecolor=clrs[3])
+                            facecolor=colors_[3])
 
-        scores = self._acquisition(X,  X_samples)
+        scores = self._acquisition(X,  self.X_samples_)
 
-        plt.plot(X_samples, scores*2, label='Acquisition function')
+        plt.plot(self.X_samples_, scores*2, label='Acquisition function')
 
         # Set plot metrics
         plt.xlim([0, 1])
@@ -232,4 +207,8 @@ class BayesianOpt:
         plt.ylabel("Balanced Accuracy")
         plt.legend()
         plt.savefig(self.plot_dir + f"Plot_iter_{iteration}.png")
-        # plt.show()
+        
+        if show:
+            plt.show()
+    
+
