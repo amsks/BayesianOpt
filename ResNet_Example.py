@@ -30,16 +30,33 @@ import gin
 
 from BayesianOpt import BayesianOpt
 
-# Customize the RESNET to 9 layers and 10 classes
+ 
 def create_resnet9_model() -> nn.Module:
+    '''
+        Function to customize the RESNET to 9 layers and 10 classes
+
+        Returns
+        --------
+        torch.module
+            Pytorch Module of the Model
+    '''
     model = ResNet(BasicBlock, [1, 1, 1, 1], num_classes=10)
     model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
     return model
 
 
-# Lightning Module helps with optimization based on specified Learning Rate for SGD optimizer
+# 
 class ResNet9(pl.LightningModule):
     def __init__(self, learning_rate=0.005):
+        '''
+            Pytorch Lightning Module for training the RESNET with SGD optimizer
+
+            Parameters
+            -----------
+            learning_rate: float 
+                Learning rate to be used for training everytime since it is an 
+                optimization parameter
+        '''
         super().__init__()
         self.model = create_resnet9_model()
         self.loss = nn.CrossEntropyLoss()
@@ -60,6 +77,25 @@ class ResNet9(pl.LightningModule):
 
 # Return the predicted classes and probabilities
 def predict(x, model: pl.LightningModule):
+    '''
+        Function to predict based on a model 
+
+        Parameters
+        -----------
+        x: torch dataloader
+            Batch of images for inference
+        model: lightning module 
+            Inference model
+
+        Returns
+        --------
+        predicted_class: torch tensor
+            tensor of classes 
+
+        probabilities: 10 x 10
+            Predicted probabilities for each class
+
+    '''
     model.freeze()
     probabilities = torch.softmax(model(x), dim=1)
     predicted_class = torch.argmax(probabilities, dim=1)
@@ -76,8 +112,34 @@ def objective(  lr=0.1,
                 test_dl = None 
             ):
 
+    '''
+        Objective function for optimization procedure 
+
+        Parameters
+        -----------
+        lr: float 
+            learning Rate 
+        epochs: int 
+            Epochs for training
+        gpu_count: int 
+            Number of GPUs to be used (0 for only CPUs)
+        iteration: int 
+            Current iteration
+        model_dir: str
+            directory to save model checkpoints 
+        train_dl: Torch Dataloader 
+            Dataloader for training
+        test_dl: Torch Dataloader 
+            Dataloader for inference
+
+        Returns
+        ---------
+        float
+            balanced Accuracy of the model after inference
+
+    '''
+
     save = False
-    
     checkpoint = "current_model.pt"
 
     if train_dl == None:
@@ -136,6 +198,44 @@ def session(
     epsilon=0.01, 
     eps_decay=False
 ):
+    '''
+        Session to run the optimization
+
+        Parameters
+        -----------
+        budget: int 
+            Optimization budget i.e number of iterations for which to run optimization
+
+        init_samples: int
+            Number of evaluations to be done before fitting a Gaussian Process 
+        
+        gpu_count: int
+            Number of GPUs to use (0 for CPU)
+        
+        batch_size: int 
+            Batch size for each training
+        
+        output_dir: int
+            directory location to store the models and plots 
+        
+        length_scale: float
+            Scale for Matern Kernel 
+        
+        nu: float
+            Smoothness of the learned function
+        
+        alpha: float
+            variance of additional Gaussian measurement noise on the training observations
+        
+        n_restarts_optimizer: int
+            Number of times the Process has to try to fit the data
+        
+        epsilon: float  
+            Exporation in Expected Improvement
+
+        eps_decay: bool
+            whether to decay the epsilon or not
+    '''
 
     os.makedirs(os.path.join(output_dir, "plots"))
     os.makedirs(os.path.join(output_dir, "models"))
@@ -148,13 +248,16 @@ def session(
     
 
     # sample the domain
-    X = np.array([np.random.uniform(0, 1) for _ in range(init_samples)])
-    y = np.array([objective(lr =x, 
-                            epochs=init_epochs, 
-                            gpu_count=gpu_count,
-                            train_dl=train_dl,
-                            test_dl=test_dl
-                            ) for x in X])
+    # X = np.array([np.random.uniform(0, 1) for _ in range(init_samples)])
+    X = np.array([0.0, 0.99])
+    # y = np.array([objective(lr =x, 
+    #                         epochs=init_epochs, 
+    #                         gpu_count=gpu_count,
+    #                         train_dl=train_dl,
+    #                         test_dl=test_dl
+    #                         ) for x in X])
+
+    y = np.array([0.0894, 0.9707])
 
     # reshape into rows and cols
     X = X.reshape(len(X), 1)
@@ -173,7 +276,9 @@ def session(
         B.model.fit(X, y)
 
         # select the next point to sample
-        X_next = B.optimize_acq(X, y)
+        # X_next = B.optimize_acq(X, y)
+
+        X_next = B.suggest_next(X,y)
 
         # sample the point
         Y_next = objective( lr=X_next, 
@@ -267,6 +372,6 @@ if __name__ == "__main__":
         "--eps_decay", type=bool, default=False,
         help="Set true to decay the epsilon parameter"
     )
-    
+
     args = parser.parse_args()
     main(args)
