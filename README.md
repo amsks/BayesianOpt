@@ -2,6 +2,8 @@
 
 This is a basic and ongoing project on Automated Hyperparameter optimization using Bayesian Optimization. 
 
+NOTE: I haven't written it keping optimality in mind, and probably need to restructure it at some point
+
 ## Available Scripts
 
 - BayesianOpt.py : The script containing the class implementation of the Bayesian Optimizer 
